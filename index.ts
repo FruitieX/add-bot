@@ -45,16 +45,35 @@ const getNumPlayers = (channelId: number, queueId: string) => {
   return Object.keys(channelLens.compose(queueLens).get(state)).length;
 };
 
-const getQueueId = (match: RegExpMatchArray | null) =>
-  match && match[1] ? match[1].trim() : DEFAULT_QUEUE;
+const getPlayersStr = (
+  channelId: number,
+  queueId: string,
+  avoidHighlight?: boolean
+) => {
+  const channelLens = Lens.fromNullableProp<Channels>()(channelId, {});
+  const queueLens = Lens.fromNullableProp<Channel>()(queueId, {});
 
-const logStatus = (channelId: number, queueId: string) =>
-  bot.sendMessage(
-    channelId,
-    `${getNumPlayers(channelId, queueId)} / ${getMaxPlayers(
-      queueId
-    )} added up to ${queueId}`
-  );
+  return Object.values(channelLens.compose(queueLens).get(state))
+    .map((playerName: string) =>
+      playerName.replace("@", avoidHighlight ? "" : "@")
+    )
+    .join(", ");
+};
+
+const logStatus = (channelId: number, queueId: string) => {
+  const numPlayers = getNumPlayers(channelId, queueId);
+
+  if (numPlayers) {
+    bot.sendMessage(
+      channelId,
+      `${numPlayers} / ${getMaxPlayers(
+        queueId
+      )} added up to ${queueId} (${getPlayersStr(channelId, queueId, true)})`
+    );
+  } else {
+    bot.sendMessage(channelId, `${queueId} is empty.`);
+  }
+};
 
 const add = (
   channelId: number,
@@ -75,11 +94,10 @@ const add = (
   const maxPlayers = getMaxPlayers(queueId);
 
   if (numPlayers >= maxPlayers) {
-    const players: string[] = Object.values(
-      channelLens.compose(queueLens).get(state)
+    bot.sendMessage(
+      channelId,
+      `Game ready! ${getPlayersStr(channelId, queueId)}`
     );
-
-    bot.sendMessage(channelId, `Game ready! ${players.join(", ")}`);
 
     state = channelLens.compose(queueLens).set({})(state);
   } else {
@@ -100,16 +118,25 @@ const remove = (channelId: number, queueId: string, userId: number) => {
   logStatus(channelId, queueId);
 };
 
-bot.onText(/\/add\s*(.+)?/, ({ from, chat }, match) => {
-  if (!from) return;
-  add(chat.id, getQueueId(match), from.id, getUsername(from));
-});
+// https://gist.github.com/sk22/cc02d95cd2d24c882835c1dddb33e1da
+const telegramBotRe = /^\/([^@\s]+)@?(?:(\S+)|)\s?([\s\S]*)$/;
 
-bot.onText(/\/remove\s*(.+)?/, ({ from, chat }, match) => {
-  if (!from) return;
-  remove(chat.id, getQueueId(match), from.id);
-});
+bot.onText(telegramBotRe, ({ from, chat }, match) => {
+  if (!from || !match) return;
+  const cmd = match[1];
+  const queueId = match[3] ? match[3] : DEFAULT_QUEUE;
 
-bot.onText(/\/status\s*(.+)?/, ({ chat }, match) => {
-  logStatus(chat.id, getQueueId(match));
+  switch (cmd) {
+    case "add":
+      add(chat.id, queueId, from.id, getUsername(from));
+      break;
+
+    case "remove":
+      remove(chat.id, queueId, from.id);
+      break;
+
+    case "status":
+      logStatus(chat.id, queueId);
+      break;
+  }
 });
